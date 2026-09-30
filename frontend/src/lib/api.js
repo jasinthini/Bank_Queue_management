@@ -38,7 +38,9 @@ export async function apiRequest(
       body: body === undefined ? undefined : JSON.stringify(body),
     });
   } catch (error) {
-    if (error.name === "AbortError") throw error;
+    if (error.name === "AbortError") {
+      throw error;
+    }
 
     throw new Error(
       "Backend இணைக்க முடியவில்லை. Server மற்றும் CORS சரிபாருங்கள்."
@@ -52,7 +54,11 @@ export async function apiRequest(
     try {
       data = JSON.parse(text);
     } catch {
-      throw new Error(`Backend response error (${response.status})`);
+      const error = new Error(
+        `Backend response error (${response.status})`
+      );
+      error.status = response.status;
+      throw error;
     }
   }
 
@@ -63,7 +69,13 @@ export async function apiRequest(
       message = data.detail;
     } else if (Array.isArray(data?.detail)) {
       message = data.detail
-        .map((item) => `${item.loc.join(".")}: ${item.msg}`)
+        .map((item) => {
+          const field = Array.isArray(item.loc)
+            ? item.loc.join(".")
+            : "";
+
+          return field ? `${field}: ${item.msg}` : item.msg;
+        })
         .join("\n");
     }
 
@@ -88,7 +100,7 @@ function query(filters = {}) {
   return result ? `?${result}` : "";
 }
 
-// Login
+// Authentication
 export function loginUser(email, password) {
   return apiRequest("/auth/login", {
     method: "POST",
@@ -100,12 +112,10 @@ export function loginUser(email, password) {
   });
 }
 
-// Current logged-in user
 export function getCurrentUser(token = getToken()) {
   return apiRequest("/auth/me", { token });
 }
 
-// Login and save session
 export async function signIn(email, password) {
   const data = await loginUser(email, password);
 
@@ -114,7 +124,7 @@ export async function signIn(email, password) {
   }
 
   const user = await getCurrentUser(data.access_token);
-  const role = String(user.role || "").toUpperCase();
+  const role = String(user?.role || "").toUpperCase();
 
   if (!["ADMIN", "STAFF", "CUSTOMER"].includes(role)) {
     throw new Error("User role சரியாக இல்லை.");
@@ -126,26 +136,24 @@ export async function signIn(email, password) {
   return user;
 }
 
-// Customer registration: full_name, email, password
 export function registerUser(data) {
   return apiRequest("/auth/register", {
     method: "POST",
     token: null,
     body: {
-      full_name: data.full_name,
+      full_name: data.full_name.trim(),
       email: data.email.trim().toLowerCase(),
       password: data.password,
     },
   });
 }
 
-// Branch management
+// Branches
 export const branchesApi = {
   list: () => apiRequest("/branches/"),
 
   get: (id) => apiRequest(`/branches/${id}`),
 
-  // data: name, code, address
   create: (data) =>
     apiRequest("/branches/", {
       method: "POST",
@@ -164,21 +172,19 @@ export const branchesApi = {
     }),
 };
 
-// Service management
+// Services
 export const servicesApi = {
   list: (branchId) =>
     apiRequest(`/services/${query({ branch_id: branchId })}`),
 
   get: (id) => apiRequest(`/services/${id}`),
 
-  // data: branch_id, name, code, token_prefix
   create: (data) =>
     apiRequest("/services/", {
       method: "POST",
       body: data,
     }),
 
-  // data: name, code, token_prefix
   update: (id, data) =>
     apiRequest(`/services/${id}`, {
       method: "PUT",
@@ -191,22 +197,19 @@ export const servicesApi = {
     }),
 };
 
-// Counter management
+// Counters
 export const countersApi = {
-  // filters: branch_id, service_id
   list: (filters = {}) =>
     apiRequest(`/counters/${query(filters)}`),
 
   get: (id) => apiRequest(`/counters/${id}`),
 
-  // data: branch_id, service_id, name, is_active
   create: (data) =>
     apiRequest("/counters/", {
       method: "POST",
       body: data,
     }),
 
-  // data: name, is_active
   update: (id, data) =>
     apiRequest(`/counters/${id}`, {
       method: "PUT",
@@ -219,7 +222,7 @@ export const countersApi = {
     }),
 };
 
-// Tokens and staff queue operations
+// Customer tickets and staff operations
 export const ticketsApi = {
   create: (branchId, serviceId) =>
     apiRequest("/queue-tickets/", {
@@ -261,21 +264,27 @@ export const usersApi = {
 
   get: (id) => apiRequest(`/users/${id}`),
 
-  // data: full_name, email, password
   createStaff: (data) =>
     apiRequest("/users/staff", {
       method: "POST",
       body: {
-        full_name: data.full_name,
+        full_name: data.full_name.trim(),
         email: data.email.trim().toLowerCase(),
         password: data.password,
       },
     }),
 
-  // role: STAFF or CUSTOMER
   updateRole: (id, role) =>
     apiRequest(`/users/${id}/role`, {
       method: "PUT",
       body: { role },
     }),
 };
+
+// Public live board
+export function getBoardTickets(branchId) {
+  return apiRequest(
+    `/queue-tickets/board${query({ branch_id: branchId })}`,
+    { token: null }
+  );
+}
