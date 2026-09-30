@@ -1,34 +1,35 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Volume2, VolumeX } from "lucide-react";
-import { Button } from "../components/Button.jsx";
-import lobby from "../assets/bank-lobby.jpg";
-import { AppShell, Loading } from "../components/AppShell.jsx";
+import { AppShell } from "../components/AppShell.jsx";
 import {
   branchesApi,
   servicesApi,
   countersApi,
   getBoardTickets,
 } from "../lib/api.js";
+import lobby from "../assets/bank-lobby.jpg";
+
+function sameId(a, b) {
+  return String(a) === String(b);
+}
 
 function callTime(ticket) {
   return Date.parse(ticket.called_at || "") || 0;
 }
 
 export default function Board() {
-  const [params] = useSearchParams();
+  const [params, setParams] = useSearchParams();
   const requestedBranchId = params.get("branch_id") || "";
 
+  const [branches, setBranches] = useState([]);
   const [branch, setBranch] = useState(null);
   const [services, setServices] = useState([]);
   const [counters, setCounters] = useState([]);
   const [tickets, setTickets] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [sound, setSound] = useState(false);
+  const [updatedAt, setUpdatedAt] = useState(null);
   const [now, setNow] = useState(Date.now());
-
-  const lastCall = useRef(null);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -49,23 +50,29 @@ export default function Board() {
     setServices([]);
     setCounters([]);
     setTickets([]);
-    lastCall.current = null;
+    setUpdatedAt(null);
 
     async function refresh() {
       try {
         if (!selectedBranch) {
-          const branches = await branchesApi.list();
+          const branchData = await branchesApi.list();
+          if (cancelled) return;
+
+          if (!Array.isArray(branchData)) {
+            throw new Error("Unexpected branch response.");
+          }
+
+          setBranches(branchData);
 
           selectedBranch = requestedBranchId
-            ? branches.find(
-                (item) =>
-                  String(item.id) === requestedBranchId
+            ? branchData.find((item) =>
+                sameId(item.id, requestedBranchId)
               )
-            : branches[0];
+            : branchData[0];
 
           if (!selectedBranch) {
             throw new Error(
-              "Branch கிடைக்கவில்லை. Admin page-ல் branch சேருங்கள்."
+              "Branch not found. Select an available branch."
             );
           }
         }
@@ -81,25 +88,38 @@ export default function Board() {
 
         if (cancelled) return;
 
+        if (
+          !Array.isArray(serviceData) ||
+          !Array.isArray(counterData) ||
+          !Array.isArray(ticketData)
+        ) {
+          throw new Error(
+            "Unexpected board response from backend."
+          );
+        }
+
         setBranch(selectedBranch);
+
         setServices(
-          serviceData.filter(
-            (item) =>
-              item.branch_id === selectedBranch.id
+          serviceData.filter((item) =>
+            sameId(item.branch_id, selectedBranch.id)
           )
         );
+
         setCounters(
-          counterData.filter(
-            (item) =>
-              item.branch_id === selectedBranch.id
+          counterData.filter((item) =>
+            sameId(item.branch_id, selectedBranch.id)
           )
         );
+
+        // Preserve the sequence order returned by the backend.
         setTickets(ticketData);
+        setUpdatedAt(Date.now());
         setError("");
       } catch (err) {
         if (!cancelled) {
           setError(
-            err.message || "Board தகவல் பெற முடியவில்லை."
+            err.message || "Could not load the Live Board."
           );
         }
       } finally {
@@ -118,65 +138,15 @@ export default function Board() {
     };
   }, [requestedBranchId]);
 
-  const newest = tickets
-    .filter((ticket) => ticket.status === "CALLED")
-    .sort((a, b) => callTime(b) - callTime(a))[0];
-
-  const newestId = newest?.id;
-  const newestCalledAt = newest?.called_at;
-
-  useEffect(() => {
-    if (!newestId) return;
-
-    const key = `${newestId}:${newestCalledAt}`;
-
-    if (
-      lastCall.current &&
-      lastCall.current !== key &&
-      sound
-    ) {
-      const AudioContextClass =
-        window.AudioContext || window.webkitAudioContext;
-
-      if (AudioContextClass) {
-        try {
-          const ctx = new AudioContextClass();
-
-          [0, 0.18].forEach((delay, index) => {
-            const osc = ctx.createOscillator();
-            const gain = ctx.createGain();
-
-            osc.frequency.value = 784;
-            gain.gain.value = 0.08;
-
-            osc.connect(gain).connect(ctx.destination);
-            osc.start(ctx.currentTime + delay);
-            osc.stop(ctx.currentTime + delay + 0.12);
-
-            if (index === 1) {
-              osc.onended = () => {
-                ctx.close().catch(() => {});
-              };
-            }
-          });
-
-          ctx.resume().catch(() => {});
-        } catch {
-          // Board updates continue if audio is unavailable.
-        }
-      }
-    }
-
-    lastCall.current = key;
-  }, [newestId, newestCalledAt, sound]);
-
-  if (loading) {
-    return (
-      <AppShell>
-        <Loading />
-      </AppShell>
-    );
+  function changeBranch(event) {
+    const nextParams = new URLSearchParams(params);
+    nextParams.set("branch_id", event.target.value);
+    setParams(nextParams);
   }
+
+  const waiting = tickets.filter(
+    (ticket) => ticket.status === "WAITING"
+  );
 
   const active = tickets
     .filter(
@@ -186,228 +156,393 @@ export default function Board() {
     )
     .sort((a, b) => callTime(b) - callTime(a));
 
-  const latest = active[0];
   const missed = tickets.filter(
     (ticket) => ticket.status === "MISSED"
   );
 
+  const latest = active[0];
+
+  function counterName(id) {
+    return (
+      counters.find((item) => sameId(item.id, id))?.name ||
+      `Counter ${id}`
+    );
+  }
+
+  function serviceName(id) {
+    return (
+      services.find((item) => sameId(item.id, id))?.name ||
+      `Service ${id}`
+    );
+  }
+
   const time = new Date(now).toLocaleTimeString([], {
     hour: "2-digit",
     minute: "2-digit",
+    second: "2-digit",
   });
 
-  const counterName = (id) =>
-    counters.find((counter) => counter.id === id)?.name ||
-    `Counter ${id}`;
-
   return (
-    <AppShell title="Live Waiting Board">
-      {error && (
-        <p
-          role="alert"
-          className="mb-5 rounded-lg bg-red-50 p-3 text-sm text-red-700"
-        >
-          {error}
-          {branch && " · Showing the last successful update"}
-        </p>
-      )}
-
-      <div className="overflow-hidden rounded-md bg-ink text-ink-foreground shadow-lift">
-        <div className="flex items-center justify-between border-b border-ink-foreground/10 px-8 py-4">
-          <p className="text-xs font-bold uppercase tracking-[0.3em] text-ink-foreground/60">
-            Now serving
-          </p>
-
-          <div className="flex items-center gap-4">
-            <Button
-              variant="ghost"
-              size="icon"
-              title={
-                sound
-                  ? "Mute announcements"
-                  : "Enable announcement chime"
-              }
-              onClick={() => setSound((value) => !value)}
-            >
-              {sound ? <Volume2 /> : <VolumeX />}
-            </Button>
-
-            <p className="font-token text-xl">{time}</p>
-          </div>
-        </div>
-
-        <div className="grid gap-0 lg:grid-cols-5">
-          <div className="flex flex-col items-center justify-center gap-4 border-ink-foreground/10 p-10 lg:col-span-2 lg:border-r">
-            {latest ? (
-              <>
-                <p
-                  key={latest.id}
-                  className="animate-flip font-token text-6xl sm:text-8xl xl:text-9xl font-extrabold leading-none text-accent"
-                >
-                  {latest.token_number}
-                </p>
-
-                <p className="text-3xl font-display">
-                  → {counterName(latest.counter_id)}
-                </p>
-              </>
-            ) : (
-              <p className="text-2xl text-ink-foreground/50">
-                {error
-                  ? "Board information unavailable"
-                  : "Waiting for next call…"}
-              </p>
-            )}
-          </div>
-
-          <div className="grid grid-cols-2 gap-px bg-ink-foreground/10 lg:col-span-3">
-            {counters.map((counter) => {
-              const ticket = active.find(
-                (item) => item.counter_id === counter.id
-              );
-
-              return (
-                <div
-                  key={counter.id}
-                  className="bg-ink p-6"
-                >
-                  <p className="text-xs font-bold uppercase tracking-[0.25em] text-ink-foreground/50">
-                    {counter.name}
-                  </p>
-
-                  <p
-                    key={ticket?.id}
-                    className={`mt-3 font-token text-3xl sm:text-5xl font-bold ${
-                      ticket
-                        ? "animate-flip"
-                        : "text-ink-foreground/20"
-                    }`}
-                  >
-                    {ticket?.token_number ?? "—"}
-                  </p>
-
-                  <p
-                    className={`mt-2 text-sm font-semibold ${
-                      ticket?.status === "SERVING"
-                        ? "text-serving"
-                        : ticket
-                          ? "text-called animate-soft-pulse"
-                          : "text-ink-foreground/40"
-                    }`}
-                  >
-                    {ticket
-                      ? ticket.status === "SERVING"
-                        ? "Being served"
-                        : "Please proceed"
-                      : counter.is_active
-                        ? "Open"
-                        : "Closed"}
-                  </p>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      </div>
-
-      <div className="mt-6 grid gap-6 lg:grid-cols-3">
-        {services.map((service) => {
-          const queue = tickets.filter(
-            (ticket) =>
-              ticket.service_id === service.id &&
-              ticket.status === "WAITING"
-          );
-
-          return (
-            <div
-              key={service.id}
-              className="surface p-6"
-            >
-              <div className="flex items-center justify-between">
-                <h3 className="text-xl font-semibold">
-                  {service.code} · {service.name}
-                </h3>
-
-                <span className="rounded-md bg-muted px-3 py-1 text-xs font-semibold">
-                  {queue.length} waiting
-                </span>
-              </div>
-
-              <ol className="mt-4 space-y-2">
-                {queue.slice(0, 6).map((ticket, index) => (
-                  <li
-                    key={ticket.id}
-                    className="animate-rise flex items-center justify-between rounded-md bg-background px-4 py-2.5"
-                    style={{
-                      animationDelay: `${index * 40}ms`,
-                    }}
-                  >
-                    <span className="flex items-center gap-3">
-                      <span className="text-xs text-muted-foreground">
-                        {index + 1}
-                      </span>
-
-                      <span className="font-token text-xl font-bold">
-                        {ticket.token_number}
-                      </span>
-                    </span>
-
-                    <span className="font-token text-sm text-muted-foreground">
-                      Waiting
-                    </span>
-                  </li>
-                ))}
-
-                {!queue.length && (
-                  <li className="py-6 text-center text-sm text-muted-foreground">
-                    No one waiting
-                  </li>
-                )}
-              </ol>
-            </div>
-          );
-        })}
-      </div>
-
-      <div className="mt-6 grid overflow-hidden border border-border bg-card md:grid-cols-2">
+    <AppShell title="Live Board">
+      {/* Bank image banner */}
+      <section className="relative mb-6 overflow-hidden rounded-lg border border-border">
         <img
           src={lobby}
-          alt="Aureum Bank branch interior"
-          className="h-52 w-full object-cover md:h-64"
+          alt="Aureum Bank lobby"
+          className="h-48 w-full object-cover sm:h-64"
         />
 
-        <div className="flex flex-col justify-center p-8">
-          <p className="text-xs font-semibold uppercase tracking-widest text-primary">
+        <div className="absolute inset-0 bg-gradient-to-r from-black/85 via-black/50 to-transparent" />
+
+        <div className="absolute inset-0 flex flex-col justify-center px-6 sm:px-10">
+          <p className="text-xs font-bold uppercase tracking-[0.25em] text-primary">
+            AUREUM BANK
+          </p>
+
+          <h2 className="mt-3 font-display text-3xl text-white sm:text-4xl">
+            Your turn, made simple.
+          </h2>
+
+          <p className="mt-3 max-w-md text-sm text-white/80">
+            Watch your token and proceed to your counter
+            when called.
+          </p>
+        </div>
+      </section>
+
+      {/* Heading and branch selection */}
+      <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <p className="text-xs font-bold uppercase tracking-widest text-primary">
             Aureum Bank
           </p>
 
-          <h2 className="mt-3 font-display text-3xl">
-            More time for what matters.
-          </h2>
+          <h1 className="mt-2 font-display text-3xl">
+            Live Queue Board
+          </h1>
 
-          <p className="mt-3 text-sm text-muted-foreground">
-            Bank with confidence at{" "}
-            {branch?.name || "Aureum Bank"}.
-            Your place in line is always right here.
+          <p className="mt-2 text-sm text-muted-foreground">
+            {branch?.name || "Select your branch"}
           </p>
         </div>
+
+        {branches.length > 0 && (
+          <label className="text-sm font-medium">
+            Branch
+            <select
+              value={
+                requestedBranchId ||
+                String(branch?.id || branches[0]?.id || "")
+              }
+              onChange={changeBranch}
+              className="ml-3 rounded-md border border-input bg-background px-3 py-2 text-foreground"
+            >
+              {requestedBranchId &&
+                !branches.some((item) =>
+                  sameId(item.id, requestedBranchId)
+                ) && (
+                  <option value={requestedBranchId}>
+                    Unavailable branch
+                  </option>
+                )}
+
+              {branches.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
       </div>
 
-      {missed.length > 0 && (
-        <div className="mt-6 surface flex flex-wrap items-center gap-3 p-5">
-          <span className="text-sm font-semibold text-missed">
-            Missed — please see the desk:
-          </span>
+      {error && (
+        <p
+          role="alert"
+          className="mb-5 rounded-md bg-red-500/10 p-4 text-sm text-red-500"
+        >
+          {error}
+          {updatedAt
+            ? " Showing the last successful update."
+            : ""}
+        </p>
+      )}
 
-          {missed.map((ticket) => (
-            <span
-              key={ticket.id}
-              className="rounded-lg bg-missed/10 px-3 py-1 font-token font-bold text-missed"
-            >
-              {ticket.token_number}
-            </span>
-          ))}
-        </div>
+      {loading ? (
+        <p className="py-16 text-center text-muted-foreground">
+          Loading queue…
+        </p>
+      ) : !branch ? (
+        <p className="py-12 text-center text-muted-foreground">
+          Board data is unavailable.
+        </p>
+      ) : (
+        <>
+          {/* Queue totals */}
+          <div className="mb-6 grid gap-4 sm:grid-cols-3">
+            {[
+              ["Waiting", waiting.length],
+              ["Called / Serving", active.length],
+              ["Missed", missed.length],
+            ].map(([label, count]) => (
+              <div
+                key={label}
+                className="rounded-lg border border-border bg-card p-5"
+              >
+                <p className="text-sm text-muted-foreground">
+                  {label}
+                </p>
+
+                <p className="mt-2 font-token text-3xl font-bold text-primary">
+                  {count}
+                </p>
+              </div>
+            ))}
+          </div>
+
+          {/* Latest active call */}
+          <section className="overflow-hidden rounded-lg border border-border bg-card">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-6 py-4">
+              <h2 className="text-sm font-bold uppercase tracking-widest text-primary">
+                Now Serving
+              </h2>
+
+              <p className="font-token text-xl">
+                {time}
+              </p>
+            </div>
+
+            <div className="p-8 text-center sm:p-12">
+              {latest ? (
+                <>
+                  <p className="font-token text-6xl font-bold text-primary sm:text-8xl">
+                    {latest.token_number}
+                  </p>
+
+                  <p className="mt-4 font-display text-2xl">
+                    {counterName(latest.counter_id)}
+                  </p>
+
+                  <p className="mt-2 text-muted-foreground">
+                    {serviceName(latest.service_id)}
+                  </p>
+
+                  <p className="mt-4 font-semibold text-primary">
+                    {latest.status === "CALLED"
+                      ? "Please proceed to your counter"
+                      : "Being served"}
+                  </p>
+                </>
+              ) : (
+                <p className="text-xl text-muted-foreground">
+                  Waiting for next call…
+                </p>
+              )}
+            </div>
+          </section>
+
+          {/* Counters */}
+          <section className="mt-8">
+            <h2 className="font-display text-2xl">
+              Counters
+            </h2>
+
+            <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {counters.map((counter) => {
+                const current = active.find((ticket) =>
+                  sameId(ticket.counter_id, counter.id)
+                );
+
+                return (
+                  <div
+                    key={counter.id}
+                    className="rounded-lg border border-border bg-card p-6"
+                  >
+                    <h3 className="font-semibold">
+                      {counter.name}
+                    </h3>
+
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      {serviceName(counter.service_id)}
+                    </p>
+
+                    <p className="mt-4 font-token text-4xl font-bold text-primary">
+                      {current?.token_number || "—"}
+                    </p>
+
+                    <p className="mt-3 text-sm text-muted-foreground">
+                      {current
+                        ? current.status === "CALLED"
+                          ? "Please proceed"
+                          : "Being served"
+                        : counter.is_active
+                          ? "Open — waiting for next call"
+                          : "Closed"}
+                    </p>
+                  </div>
+                );
+              })}
+            </div>
+
+            {!counters.length && (
+              <p className="mt-4 text-sm text-muted-foreground">
+                No counters configured for this branch.
+              </p>
+            )}
+          </section>
+
+          {/* Services and waiting lists */}
+          <section className="mt-8">
+            <h2 className="font-display text-2xl">
+              Services and Waiting Tokens
+            </h2>
+
+            <div className="mt-4 grid gap-5 lg:grid-cols-2">
+              {services.map((service) => {
+                const queue = waiting.filter((ticket) =>
+                  sameId(ticket.service_id, service.id)
+                );
+
+                const nextTicket = queue[0];
+
+                const serviceMissed = missed.filter((ticket) =>
+                  sameId(ticket.service_id, service.id)
+                );
+
+                return (
+                  <div
+                    key={service.id}
+                    className="rounded-lg border border-border bg-card p-6"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <h3 className="text-xl font-semibold">
+                          {service.name}
+                        </h3>
+
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          {service.code}
+                        </p>
+                      </div>
+
+                      <span className="shrink-0 rounded-md bg-muted px-3 py-1 text-xs font-semibold">
+                        {queue.length} waiting
+                      </span>
+                    </div>
+
+                    <div className="mt-5 rounded-md border border-primary/30 bg-primary/10 p-4">
+                      <p className="text-xs font-bold uppercase tracking-widest text-primary">
+                        Next to call
+                      </p>
+
+                      <p className="mt-2 font-token text-3xl font-bold">
+                        {nextTicket?.token_number || "—"}
+                      </p>
+
+                      <p className="mt-2 text-xs text-muted-foreground">
+                        {nextTicket
+                          ? "Waiting for an available counter to call."
+                          : "No waiting tokens."}
+                      </p>
+                    </div>
+
+                    <h4 className="mt-5 text-sm font-semibold">
+                      Waiting list
+                    </h4>
+
+                    <ol className="mt-3 max-h-80 space-y-2 overflow-y-auto">
+                      {queue.map((ticket, index) => (
+                        <li
+                          key={ticket.id}
+                          className="flex items-center justify-between gap-3 rounded-md bg-background px-4 py-3"
+                        >
+                          <div className="flex items-center gap-3">
+                            <span className="text-xs text-muted-foreground">
+                              #{index + 1}
+                            </span>
+
+                            <span className="font-token text-xl font-bold">
+                              {ticket.token_number}
+                            </span>
+                          </div>
+
+                          <span className="text-xs text-muted-foreground">
+                            WAITING
+                          </span>
+                        </li>
+                      ))}
+                    </ol>
+
+                    {!queue.length && (
+                      <p className="py-5 text-center text-sm text-muted-foreground">
+                        No one waiting
+                      </p>
+                    )}
+
+                    <div className="mt-5 border-t border-border pt-4">
+                      <h4 className="text-sm font-semibold text-missed">
+                        Missed tokens ({serviceMissed.length})
+                      </h4>
+
+                      {serviceMissed.length ? (
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          {serviceMissed.map((ticket) => (
+                            <span
+                              key={ticket.id}
+                              className="rounded-md bg-missed/10 px-3 py-2 font-token font-bold text-missed"
+                            >
+                              {ticket.token_number}
+                            </span>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="mt-2 text-xs text-muted-foreground">
+                          No missed tokens
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {!services.length && (
+              <p className="mt-4 text-sm text-muted-foreground">
+                No services configured for this branch.
+              </p>
+            )}
+          </section>
+
+          {/* Existing branch image section */}
+          <section className="mt-8 grid overflow-hidden rounded-lg border border-border bg-card md:grid-cols-2">
+            <img
+              src={lobby}
+              alt="Aureum Bank lobby"
+              className="h-64 w-full object-cover"
+            />
+
+            <div className="flex flex-col justify-center p-7">
+              <p className="text-xs font-bold uppercase tracking-widest text-primary">
+                Aureum Bank
+              </p>
+
+              <h2 className="mt-3 font-display text-3xl">
+                More time for what matters.
+              </h2>
+
+              <p className="mt-4 text-sm text-muted-foreground">
+                Your queue at {branch.name}. Please proceed
+                to your counter when your token is called.
+              </p>
+            </div>
+          </section>
+
+          <p className="mt-5 text-center text-xs text-muted-foreground">
+            Refreshes every 5 seconds.
+            {updatedAt &&
+              ` Last updated: ${new Date(updatedAt).toLocaleTimeString()}`}
+          </p>
+        </>
       )}
     </AppShell>
   );
