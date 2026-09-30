@@ -7,7 +7,7 @@ import Counter from "./pages/Counter.jsx";
 import Admin from "./pages/Admin.jsx";
 import Reports from "./pages/Reports.jsx";
 import Ticket from "./pages/Ticket.jsx";
-
+import CreateTicket from "./pages/CreateTicket.jsx";
 function NotFound() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
@@ -26,6 +26,7 @@ export default function App() {
       <Route path="/" element={<Home />} />
       <Route path="/login" element={<Login />} />
       <Route path="/register" element={<Register />} />
+      <Route path="/get-ticket" element={<CreateTicket />} />
       <Route path="/board" element={<Board />} />
       <Route path="/counter" element={<Counter />} />
       <Route path="/admin" element={<Admin />} />

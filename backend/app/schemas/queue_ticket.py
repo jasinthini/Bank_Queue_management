@@ -5,7 +5,12 @@ from pydantic import BaseModel, ConfigDict
 
 
 TicketStatus = Literal[
-    "WAITING", "CALLED", "SERVING", "COMPLETED", "MISSED", "CANCELLED"
+    "WAITING",
+    "CALLED",
+    "SERVING",
+    "COMPLETED",
+    "MISSED",
+    "CANCELLED",
 ]
 
 
@@ -23,13 +28,14 @@ class QueueTicketRead(BaseModel):
 
     id: int
     customer_id: int
+    customer_name: str
     branch_id: int
     service_id: int
     counter_id: int | None
     queue_date: date
     sequence_number: int
     token_number: str
-    status: str
+    status: TicketStatus
     created_at: datetime
     called_at: datetime | None
     completed_at: datetime | None

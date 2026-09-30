@@ -1,245 +1,220 @@
-import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { AppShell, StatusChip } from "../components/AppShell.jsx";
-import { Button } from "../components/Button.jsx";
 import {
-  branchesApi,
-  servicesApi,
-  ticketsApi,
-  getToken,
-} from "../lib/api.js";
+  ArrowRight,
+  Banknote,
+  CreditCard,
+  Landmark,
+  Ticket,
+  Monitor,
+  UsersRound,
+} from "lucide-react";
+import { AppShell } from "../components/AppShell.jsx";
+import lobby from "../assets/bank-lobby.jpg";
+
+const services = [
+  {
+    icon: Banknote,
+    title: "Cash Deposit",
+    description: "Take a queue ticket for your cash deposit.",
+  },
+  {
+    icon: CreditCard,
+    title: "Cash Withdrawal",
+    description: "Join the queue for cash withdrawal services.",
+  },
+];
+
+const steps = [
+  {
+    icon: Landmark,
+    title: "Choose your branch",
+    description: "Select the branch you are visiting.",
+  },
+  {
+    icon: Ticket,
+    title: "Get your ticket",
+    description: "Choose an available service and create your token.",
+  },
+  {
+    icon: Monitor,
+    title: "Follow your turn",
+    description: "Check the Live Board and proceed when called.",
+  },
+];
 
 export default function Home() {
-  const [branches, setBranches] = useState([]);
-  const [branchId, setBranchId] = useState("");
-  const [services, setServices] = useState([]);
-  const [serviceId, setServiceId] = useState("");
-  const [ticket, setTicket] = useState(null);
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [servicesLoading, setServicesLoading] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function loadBranches() {
-      try {
-        const data = await branchesApi.list();
-        if (cancelled) return;
-
-        setBranches(data);
-        setBranchId(String(data[0]?.id || ""));
-
-        if (!data.length) {
-          setError("No branches available. Add a branch in Admin.");
-        }
-      } catch (err) {
-        if (!cancelled) setError(err.message);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    }
-
-    loadBranches();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!branchId) return;
-    let cancelled = false;
-
-    setServices([]);
-    setServiceId("");
-    setTicket(null);
-    setError("");
-    setServicesLoading(true);
-
-    async function loadServices() {
-      try {
-        const data = await servicesApi.list(branchId);
-        if (cancelled) return;
-
-        const matching = data.filter(
-          (service) => String(service.branch_id) === branchId
-        );
-
-        setServices(matching);
-        setServiceId(String(matching[0]?.id || ""));
-
-        if (!matching.length) {
-          setError("No services available for this branch.");
-        }
-      } catch (err) {
-        if (!cancelled) setError(err.message);
-      } finally {
-        if (!cancelled) setServicesLoading(false);
-      }
-    }
-
-    loadServices();
-    return () => {
-      cancelled = true;
-    };
-  }, [branchId]);
-
-  async function submit(event) {
-    event.preventDefault();
-    setError("");
-
-    if (!getToken()) {
-      setError("Please sign in before taking a ticket.");
-      return;
-    }
-
-    if (!branchId || !serviceId) {
-      setError("Select a branch and service.");
-      return;
-    }
-
-    setSubmitting(true);
-
-    try {
-      const created = await ticketsApi.create(branchId, serviceId);
-      setTicket(created);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  const branch = branches.find(
-    (item) => String(item.id) === branchId
-  );
-
-  const service = services.find(
-    (item) => String(item.id) === String(ticket?.service_id)
-  );
-
-  const fieldClass =
-    "mt-2 w-full rounded-md border border-input bg-background px-4 py-3";
-
   return (
-    <AppShell title="Get a ticket">
-      <div className="mx-auto max-w-xl border border-border bg-card p-6 sm:p-8">
-        <p className="font-display text-2xl font-semibold">
-          AUREUM BANK
-        </p>
-        <p className="mt-2 text-muted-foreground">
-          Take your queue ticket
-        </p>
+    <AppShell title="Home">
+      {/* Bank image and welcome */}
+      <section className="relative overflow-hidden rounded-lg border border-border">
+        <img
+          src={lobby}
+          alt="Aureum Bank lobby and customer counters"
+          className="absolute inset-0 h-full w-full object-cover"
+        />
 
-        {error && (
-          <p
-            role="alert"
-            className="mt-5 rounded-md bg-red-500/10 p-3 text-red-500"
-          >
-            {error}
+        <div className="absolute inset-0 bg-gradient-to-r from-black/90 via-black/65 to-black/15" />
+
+        <div className="relative flex min-h-[460px] flex-col justify-center px-7 py-12 sm:min-h-[520px] sm:px-12">
+          <p className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.25em] text-primary">
+            <Landmark className="size-5" />
+            Welcome to Aureum Bank
           </p>
-        )}
 
-        {loading ? (
-          <p className="mt-6">Loading branches…</p>
-        ) : ticket ? (
-          <div className="mt-7">
-            <p className="text-sm text-muted-foreground">
-              Your queue ticket
-            </p>
-            <p className="my-4 font-token text-6xl font-bold text-primary">
-              {ticket.token_number}
-            </p>
-            <p>{branch?.name}</p>
-            <p className="mb-4 text-muted-foreground">
-              {service?.name}
-            </p>
+          <h1 className="mt-6 max-w-2xl font-display text-4xl leading-tight text-white sm:text-6xl">
+            Banking that moves
+            <span className="block text-primary">
+              with you.
+            </span>
+          </h1>
 
-            <StatusChip status={ticket.status} />
+          <p className="mt-6 max-w-lg text-base leading-relaxed text-white/80">
+            Take your queue ticket and follow your turn.
+            Spend less time standing in line and arrive at
+            your counter when called.
+          </p>
 
-            <p className="mt-5 text-sm text-muted-foreground">
-              Your ticket has been saved. Check the Live Board
-              for your counter call.
-            </p>
-
+          <div className="mt-8 flex flex-wrap gap-3">
             <Link
-              to={`/board?branch_id=${ticket.branch_id}`}
-              className="mt-6 block font-semibold text-primary"
+              to="/get-ticket"
+              className="inline-flex items-center gap-2 rounded-md bg-primary px-6 py-3 font-semibold text-primary-foreground transition hover:opacity-90"
             >
-              View Live Board →
+              Get a ticket
+              <ArrowRight className="size-5" />
             </Link>
 
-            <Button
-              variant="outline"
-              className="mt-5"
-              onClick={() => setTicket(null)}
+            <Link
+              to="/board"
+              className="inline-flex items-center gap-2 rounded-md border border-primary/60 bg-black/30 px-6 py-3 font-semibold text-white transition hover:bg-black/50"
             >
-              New ticket
-            </Button>
+              <Monitor className="size-5" />
+              Live Board
+            </Link>
           </div>
-        ) : (
-          <form onSubmit={submit} className="mt-7">
-            <label className="block text-sm font-medium">
-              Branch
-              <select
-                value={branchId}
-                onChange={(event) => setBranchId(event.target.value)}
-                className={fieldClass}
-                disabled={submitting || !branches.length}
-                required
-              >
-                <option value="">Select branch</option>
-                {branches.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.name}
-                  </option>
-                ))}
-              </select>
-            </label>
+        </div>
+      </section>
 
-            <label className="mt-5 block text-sm font-medium">
-              Service
-              <select
-                value={serviceId}
-                onChange={(event) => setServiceId(event.target.value)}
-                className={fieldClass}
-                disabled={servicesLoading || submitting}
-                required
-              >
-                <option value="">
-                  {servicesLoading ? "Loading services…" : "Select service"}
-                </option>
-                {services.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.name}
-                  </option>
-                ))}
-              </select>
-            </label>
+      {/* Introduction */}
+      <section className="grid gap-5 border-b border-border py-8 sm:grid-cols-3">
+        {[
+          ["Virtual queue", "Take a ticket for your visit"],
+          ["Multiple counters", "Follow your assigned counter"],
+          ["Live status", "See waiting and serving tokens"],
+        ].map(([title, description]) => (
+          <div key={title} className="rounded-md bg-card p-5">
+            <p className="font-semibold text-primary">
+              {title}
+            </p>
+            <p className="mt-2 text-sm text-muted-foreground">
+              {description}
+            </p>
+          </div>
+        ))}
+      </section>
 
-            <Button
-              type="submit"
-              size="lg"
-              className="mt-6 w-full"
-              disabled={
-                submitting || servicesLoading || !serviceId
-              }
+      {/* Banking services */}
+      <section className="py-10">
+        <p className="text-xs font-bold uppercase tracking-widest text-primary">
+          Banking services
+        </p>
+
+        <h2 className="mt-3 font-display text-3xl sm:text-4xl">
+          What brings you in today?
+        </h2>
+
+        <p className="mt-3 text-sm text-muted-foreground">
+          Available services depend on your selected branch.
+        </p>
+
+        <div className="mt-6 grid gap-4 sm:grid-cols-2">
+          {services.map(({ icon: Icon, title, description }) => (
+            <div
+              key={title}
+              className="rounded-lg border border-border bg-card p-6"
             >
-              {submitting ? "Creating ticket…" : "Get my ticket"}
-            </Button>
+              <Icon className="size-8 text-primary" />
 
-            {!getToken() && (
+              <h3 className="mt-5 text-xl font-semibold">
+                {title}
+              </h3>
+
+              <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
+                {description}
+              </p>
+
               <Link
-                to="/login"
-                className="mt-4 block text-center text-primary"
+                to="/get-ticket"
+                className="mt-5 inline-flex items-center gap-2 text-sm font-semibold text-primary"
               >
-                Sign in to take a ticket
+                Choose branch and service
+                <ArrowRight className="size-4" />
               </Link>
-            )}
-          </form>
-        )}
-      </div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* How it works */}
+      <section className="border-t border-border py-10">
+        <p className="text-xs font-bold uppercase tracking-widest text-primary">
+          Your next visit
+        </p>
+
+        <h2 className="mt-3 font-display text-3xl">
+          Get started in three steps
+        </h2>
+
+        <div className="mt-7 grid gap-5 md:grid-cols-3">
+          {steps.map(({ icon: Icon, title, description }, index) => (
+            <div
+              key={title}
+              className="rounded-lg border border-border bg-card p-6"
+            >
+              <div className="flex items-center justify-between">
+                <Icon className="size-7 text-primary" />
+
+                <span className="font-token text-2xl text-primary">
+                  0{index + 1}
+                </span>
+              </div>
+
+              <h3 className="mt-5 text-lg font-semibold">
+                {title}
+              </h3>
+
+              <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
+                {description}
+              </p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* Final ticket link */}
+      <section className="mb-6 flex flex-col justify-between gap-6 rounded-lg border border-primary/30 bg-card p-7 sm:flex-row sm:items-center sm:p-9">
+        <div>
+          <p className="flex items-center gap-2 text-sm font-semibold text-primary">
+            <UsersRound className="size-5" />
+            Your branch. Your turn.
+          </p>
+
+          <h2 className="mt-3 font-display text-2xl sm:text-3xl">
+            Ready for your banking visit?
+          </h2>
+
+          <p className="mt-3 text-sm text-muted-foreground">
+            Sign in and take a ticket for your selected service.
+          </p>
+        </div>
+
+        <Link
+          to="/get-ticket"
+          className="inline-flex shrink-0 items-center justify-center gap-2 rounded-md bg-primary px-6 py-3 font-semibold text-primary-foreground transition hover:opacity-90"
+        >
+          Create ticket
+          <ArrowRight className="size-5" />
+        </Link>
+      </section>
     </AppShell>
   );
 }

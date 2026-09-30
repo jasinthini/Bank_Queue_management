@@ -222,7 +222,7 @@ export const countersApi = {
     }),
 };
 
-// Customer tickets and staff operations
+// Customer tickets and Staff operations
 export const ticketsApi = {
   create: (branchId, serviceId) =>
     apiRequest("/queue-tickets/", {
@@ -236,6 +236,18 @@ export const ticketsApi = {
   my: () => apiRequest("/queue-tickets/my"),
 
   get: (id) => apiRequest(`/queue-tickets/${id}`),
+
+  // Protected Staff list, including customer names.
+  staff: (branchId) =>
+    apiRequest(
+      `/queue-tickets/staff${query({ branch_id: branchId })}`
+    ),
+
+  // Customer can cancel their own WAITING ticket.
+  cancel: (id) =>
+    apiRequest(`/queue-tickets/${id}/cancel`, {
+      method: "PUT",
+    }),
 
   callNext: (counterId) =>
     apiRequest(`/queue-tickets/call-next/${counterId}`, {
@@ -258,7 +270,7 @@ export const ticketsApi = {
     ticketsApi.updateStatus(id, "MISSED"),
 };
 
-// Admin user and staff management
+// Admin user and Staff management
 export const usersApi = {
   list: () => apiRequest("/users/"),
 
@@ -281,7 +293,7 @@ export const usersApi = {
     }),
 };
 
-// Public live board
+// Public Live Board
 export function getBoardTickets(branchId) {
   return apiRequest(
     `/queue-tickets/board${query({ branch_id: branchId })}`,

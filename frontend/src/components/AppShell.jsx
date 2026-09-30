@@ -19,6 +19,7 @@ export function AppShell({ children, title }) {
 
   const [user, setUser] = useState(null);
   const [checking, setChecking] = useState(true);
+  const [hasToken, setHasToken] = useState(() => !!getToken());
 
   useEffect(() => {
     document.title = title
@@ -28,28 +29,43 @@ export function AppShell({ children, title }) {
 
   useEffect(() => {
     let cancelled = false;
+    let requestNumber = 0;
 
     async function checkSession() {
+      const currentRequest = ++requestNumber;
+      const token = getToken();
+
+      setHasToken(!!token);
       setChecking(true);
       setUser(null);
 
-      if (!getToken()) {
+      if (!token) {
         setChecking(false);
         return;
       }
 
-      try {
-        const currentUser = await getCurrentUser();
+      function isCurrent() {
+        return (
+          !cancelled &&
+          currentRequest === requestNumber &&
+          getToken() === token
+        );
+      }
 
-        if (!cancelled) {
+      try {
+        const currentUser = await getCurrentUser(token);
+
+        if (isCurrent()) {
           setUser(currentUser);
         }
       } catch (err) {
-        if (!cancelled && err.status === 401) {
+        if (isCurrent() && err.status === 401) {
           logout();
+          setHasToken(false);
+          setUser(null);
         }
       } finally {
-        if (!cancelled) {
+        if (!cancelled && currentRequest === requestNumber) {
           setChecking(false);
         }
       }
@@ -57,19 +73,20 @@ export function AppShell({ children, title }) {
 
     checkSession();
 
-    const onStorage = (event) => {
+    function onStorage(event) {
       if (
         event.key === "queueflow_access_token" ||
         event.key === null
       ) {
         checkSession();
       }
-    };
+    }
 
     window.addEventListener("storage", onStorage);
 
     return () => {
       cancelled = true;
+      requestNumber += 1;
       window.removeEventListener("storage", onStorage);
     };
   }, [location.pathname]);
@@ -77,22 +94,26 @@ export function AppShell({ children, title }) {
   const role = String(user?.role || "").toUpperCase();
 
   const nav = [
-    { to: "/", label: "Get a ticket" },
+    { to: "/", label: "Home" },
+    { to: "/get-ticket", label: "Get a ticket" },
     { to: "/board", label: "Live Board" },
   ];
 
   if (role === "STAFF" || role === "ADMIN") {
-    nav.push({ to: "/counter", label: "Teller" });
+    nav.push({
+      to: "/counter",
+      label: "Staff Dashboard",
+    });
   }
 
   if (role === "ADMIN") {
     nav.push(
-      { to: "/admin", label: "Branches" },
+      { to: "/admin", label: "Admin" },
       { to: "/reports", label: "Reports" }
     );
   }
 
-  if (!user && !checking) {
+  if (!hasToken && !checking) {
     nav.push({ to: "/login", label: "Sign in" });
   }
 
@@ -104,15 +125,17 @@ export function AppShell({ children, title }) {
     }`;
 
   const mobileClass = ({ isActive }) =>
-    `whitespace-nowrap rounded-md px-3 py-1 text-xs ${
+    `whitespace-nowrap rounded-md px-3 py-1.5 text-xs font-medium ${
       isActive
         ? "bg-primary text-primary-foreground"
-        : "text-muted-foreground"
+        : "text-muted-foreground hover:text-foreground"
     }`;
 
   function handleLogout() {
     logout();
     setUser(null);
+    setHasToken(false);
+    setChecking(false);
     navigate("/login", { replace: true });
   }
 
@@ -126,7 +149,10 @@ export function AppShell({ children, title }) {
     <div className="min-h-screen grain">
       <header className="sticky top-0 z-30 border-b border-border bg-ink/95 backdrop-blur-xl">
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-5 py-3">
-          <Link to="/" className="flex items-center gap-3">
+          <Link
+            to="/"
+            className="flex shrink-0 items-center gap-3"
+          >
             <div className="grid size-10 place-items-center rounded-md border border-primary/50 bg-primary/10 text-primary">
               <Landmark className="size-6" />
             </div>
@@ -136,13 +162,14 @@ export function AppShell({ children, title }) {
                 AUREUM{" "}
                 <span className="text-primary">BANK</span>
               </p>
+
               <p className="text-[11px] text-muted-foreground">
                 Secure Queue Management
               </p>
             </div>
           </Link>
 
-          <nav className="hidden items-center gap-1 md:flex">
+          <nav className="hidden items-center gap-1 xl:flex">
             {nav.map((item) => (
               <NavLink
                 key={item.to}
@@ -155,37 +182,30 @@ export function AppShell({ children, title }) {
             ))}
           </nav>
 
-          <div className="flex items-center gap-2 text-sm">
-            {user ? (
+          <div className="flex shrink-0 items-center gap-2 text-sm">
+            {hasToken ? (
               <>
-                <span className="hidden rounded-md bg-primary-soft px-3 py-1 text-xs font-semibold text-primary sm:inline">
-                  {roleLabel[role] || role}
-                </span>
+                {user ? (
+                  <span className="hidden rounded-md bg-primary-soft px-3 py-1 text-xs font-semibold text-primary sm:inline">
+                    {roleLabel[role] || role}
+                  </span>
+                ) : (
+                  <span className="hidden text-xs text-muted-foreground sm:inline">
+                    {checking
+                      ? "Checking session…"
+                      : "Session unavailable"}
+                  </span>
+                )}
 
                 <Button
                   variant="ghost"
-                  size="icon"
-                  title="Sign out"
+                  title="Logout"
+                  aria-label="Logout"
+                  className="gap-2"
                   onClick={handleLogout}
                 >
                   <LogOut className="size-4" />
-                </Button>
-              </>
-            ) : getToken() ? (
-              <>
-                <span className="text-xs text-muted-foreground">
-                  {checking
-                    ? "Checking session…"
-                    : "Session unavailable"}
-                </span>
-
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  title="Sign out"
-                  onClick={handleLogout}
-                >
-                  <LogOut className="size-4" />
+                  <span>Logout</span>
                 </Button>
               </>
             ) : (
@@ -197,7 +217,7 @@ export function AppShell({ children, title }) {
           </div>
         </div>
 
-        <nav className="flex gap-1 overflow-x-auto px-4 pb-2 md:hidden">
+        <nav className="flex gap-1 overflow-x-auto px-4 pb-2 xl:hidden">
           {nav.map((item) => (
             <NavLink
               key={item.to}

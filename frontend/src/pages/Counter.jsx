@@ -1,154 +1,492 @@
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { BellRing, CheckCircle2, Lock, PhoneCall, Play, RotateCcw, UserX } from "lucide-react";
-import staffImg from "../assets/counter-staff.jpg";
-import { Button, buttonClass } from "../components/Button.jsx";
-import { AppShell, Loading, PriorityChip, StatusChip } from "../components/AppShell.jsx";
-import { useQueue } from "../lib/queue-store.jsx";
-import { activeFor, callNext, complete, estimateWaitMin, markMissed, orderedCandidates, recall, startServing } from "../lib/queue-engine.js";
-
-const btnStyles = {
-  primary: "bg-warm text-accent-foreground shadow-accent",
-  serve: "bg-primary text-primary-foreground shadow-soft",
-  ghost: "border border-border bg-card hover:bg-muted",
-  danger: "border border-missed/30 bg-missed/10 text-missed hover:bg-missed/15",
-};
-
-function ActionButton({ onClick, disabled, children, variant = "ghost" }) {
-  return (
-    <Button onClick={onClick} disabled={disabled}
-      className={`flex h-auto items-center justify-center gap-2 rounded-md px-4 py-4 font-semibold transition hover:brightness-105 ${btnStyles[variant]}`}>
-      {children}
-    </Button>
-  );
-}
+import {
+  PhoneCall,
+  Play,
+  CheckCircle2,
+  UserX,
+  Lock,
+} from "lucide-react";
+import {
+  AppShell,
+  StatusChip,
+} from "../components/AppShell.jsx";
+import { Button } from "../components/Button.jsx";
+import {
+  getCurrentUser,
+  countersApi,
+  servicesApi,
+  ticketsApi,
+} from "../lib/api.js";
 
 export default function Counter() {
-  const { state, session } = useQueue();
-  if (!state) return <AppShell><Loading /></AppShell>;
+  const [user, setUser] = useState(null);
+  const [checking, setChecking] = useState(true);
+  const [counters, setCounters] = useState([]);
+  const [counterId, setCounterId] = useState("");
+  const [services, setServices] = useState([]);
+  const [tickets, setTickets] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [actionError, setActionError] = useState("");
+  const [refreshKey, setRefreshKey] = useState(0);
 
-  const allowed = session && session.role === "staff" && state.counters.some((c) => c.id === session.counterId);
-  if (!allowed)
-    return (
-      <AppShell title="Teller Console">
-        <div className="mx-auto max-w-md border border-border bg-card p-8 text-center">
-          <Lock className="mx-auto size-9 text-primary" />
-          <h1 className="mt-4 font-display text-3xl">Teller access</h1>
-          <p className="mt-3 text-muted-foreground">Sign in to operate your counter.</p>
-          <Link to="/login" className={buttonClass({ className: "mt-6" })}>Go to sign in</Link>
-        </div>
-      </AppShell>
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadSession() {
+      try {
+        const currentUser = await getCurrentUser();
+        if (cancelled) return;
+
+        setUser(currentUser);
+
+        const role = String(currentUser.role).toUpperCase();
+
+        if (!["ADMIN", "STAFF"].includes(role)) return;
+
+        const data = await countersApi.list();
+        if (cancelled) return;
+
+        setCounters(data);
+        setCounterId(String(data[0]?.id || ""));
+      } catch (err) {
+        if (!cancelled) setError(err.message);
+      } finally {
+        if (!cancelled) setChecking(false);
+      }
+    }
+
+    loadSession();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const counter = counters.find(
+    (item) => String(item.id) === counterId
+  );
+
+  const branchId = counter?.branch_id;
+
+  useEffect(() => {
+    if (!branchId) return;
+
+    let cancelled = false;
+    let timer;
+
+    setLoading(true);
+    setTickets([]);
+    setServices([]);
+
+    async function refresh() {
+      try {
+        const [ticketData, serviceData] = await Promise.all([
+          ticketsApi.staff(branchId),
+          servicesApi.list(branchId),
+        ]);
+
+        if (cancelled) return;
+
+        setTickets(ticketData);
+        setServices(serviceData);
+        setError("");
+      } catch (err) {
+        if (!cancelled) setError(err.message);
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+          timer = window.setTimeout(refresh, 5000);
+        }
+      }
+    }
+
+    refresh();
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [branchId, refreshKey]);
+
+  const allowed = ["ADMIN", "STAFF"].includes(
+    String(user?.role || "").toUpperCase()
+  );
+
+  const service = services.find(
+    (item) => String(item.id) === String(counter?.service_id)
+  );
+
+  const current = tickets.find(
+    (ticket) =>
+      String(ticket.counter_id) === counterId &&
+      ["CALLED", "SERVING"].includes(ticket.status)
+  );
+
+  const serviceTickets = tickets.filter(
+    (ticket) =>
+      String(ticket.service_id) === String(counter?.service_id)
+  );
+
+  const waiting = serviceTickets
+    .filter((ticket) => ticket.status === "WAITING")
+    .sort(
+      (a, b) =>
+        a.sequence_number - b.sequence_number ||
+        a.id - b.id
     );
 
-  return <AppShell title="Teller Console"><Console /></AppShell>;
-}
+  const missed = serviceTickets.filter(
+    (ticket) => ticket.status === "MISSED"
+  );
 
-function Console() {
-  const { state: s, session, run } = useQueue();
-  const counter = s.counters.find((c) => c.id === session.counterId);
-  const pin = session.pin;
-  const cur = activeFor(s, counter.id);
-  const queue = orderedCandidates(s, counter.serviceIds);
-  const missed = s.entries.filter((e) => e.status === "MISSED" && counter.serviceIds.includes(e.serviceId));
-  const servedToday = s.entries.filter((e) => e.counterId === counter.id && e.status === "DONE").length;
-  const svcName = (id) => s.services.find((x) => x.id === id)?.name;
+  const completed = tickets.filter(
+    (ticket) =>
+      String(ticket.counter_id) === counterId &&
+      ticket.status === "COMPLETED"
+  ).length;
+
+  async function perform(action) {
+    if (busy) return;
+
+    setBusy(true);
+    setActionError("");
+
+    try {
+      const updated = await action();
+
+      setTickets((previous) => {
+        const exists = previous.some(
+          (item) => item.id === updated.id
+        );
+
+        return exists
+          ? previous.map((item) =>
+              item.id === updated.id ? updated : item
+            )
+          : [...previous, updated];
+      });
+    } catch (err) {
+      setActionError(err.message);
+    } finally {
+      setRefreshKey((value) => value + 1);
+      setBusy(false);
+    }
+  }
 
   return (
-    <div className="grid gap-6 lg:grid-cols-5">
-      <div className="space-y-6 lg:col-span-3">
-        {/* Current token */}
-        <div className="relative overflow-hidden rounded-md bg-hero p-8 text-foreground shadow-lift">
-          <div className="flex items-start justify-between">
+    <AppShell title="Staff Dashboard">
+      {checking ? (
+        <p className="py-12 text-center">
+          Checking session…
+        </p>
+      ) : !allowed ? (
+        <div className="mx-auto max-w-md rounded-lg border border-border bg-card p-8 text-center">
+          <Lock className="mx-auto size-9 text-primary" />
+
+          <h1 className="mt-4 font-display text-3xl">
+            Staff access required
+          </h1>
+
+          <p className="mt-3 text-muted-foreground">
+            Sign in with a Staff or Admin account.
+          </p>
+
+          {error && (
+            <p className="mt-4 text-red-500">{error}</p>
+          )}
+
+          <Link
+            to="/login"
+            className="mt-6 inline-block rounded-md bg-primary px-5 py-3 font-semibold text-primary-foreground"
+          >
+            Sign in
+          </Link>
+        </div>
+      ) : (
+        <>
+          <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
             <div>
-              <div className="flex items-center gap-3">
-                <img src={staffImg} alt="Teller officer" className="size-12 rounded-full object-cover" />
-                <p className="text-xs font-bold uppercase tracking-widest opacity-70">{counter.name} · {counter.staffName}</p>
+              <p className="text-xs font-bold uppercase tracking-widest text-primary">
+                Aureum Bank
+              </p>
+
+              <h1 className="mt-2 font-display text-3xl">
+                Staff Dashboard
+              </h1>
+
+              <p className="mt-2 text-muted-foreground">
+                Welcome, {user.full_name}
+              </p>
+            </div>
+
+            <label className="text-sm font-medium">
+              Counter
+              <select
+                value={counterId}
+                disabled={busy}
+                onChange={(event) => {
+                  setCounterId(event.target.value);
+                  setActionError("");
+                }}
+                className="ml-3 rounded-md border border-input bg-background px-3 py-2 text-foreground"
+              >
+                <option value="">Select counter</option>
+
+                {counters.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          {(error || actionError) && (
+            <p
+              role="alert"
+              className="mb-5 rounded-md bg-red-500/10 p-4 text-sm text-red-500"
+            >
+              {actionError || error}
+            </p>
+          )}
+
+          {!counter ? (
+            <p className="py-10 text-center text-muted-foreground">
+              No counter selected. Add counters in Admin if needed.
+            </p>
+          ) : loading ? (
+            <p className="py-12 text-center">
+              Loading queue…
+            </p>
+          ) : (
+            <>
+              <div className="mb-6 grid gap-4 sm:grid-cols-3">
+                {[
+                  ["Waiting", waiting.length],
+                  ["Completed at this counter", completed],
+                  ["Missed for this service", missed.length],
+                ].map(([label, count]) => (
+                  <div
+                    key={label}
+                    className="rounded-lg border border-border bg-card p-5"
+                  >
+                    <p className="text-sm text-muted-foreground">
+                      {label}
+                    </p>
+
+                    <p className="mt-2 font-token text-3xl font-bold text-primary">
+                      {count}
+                    </p>
+                  </div>
+                ))}
               </div>
-              <p className="mt-1 text-sm opacity-80">{counter.serviceIds.map(svcName).join(" · ")}</p>
-            </div>
-            <div className="text-right">
-              <p className="font-token text-3xl font-bold">{servedToday}</p>
-              <p className="text-xs opacity-70">served today</p>
-            </div>
-          </div>
-          <div className="mt-8 flex items-end justify-between gap-4">
-            <div>
-              <p className="text-xs uppercase tracking-widest opacity-70">Current token</p>
-              <p key={cur?.id ?? "none"} className="animate-flip font-token text-6xl sm:text-8xl font-extrabold leading-none">{cur?.token ?? "—"}</p>
-              {cur && <p className="mt-2 text-sm opacity-85">{cur.customer} · {svcName(cur.serviceId)}{cur.recalled ? " · recalled" : ""}</p>}
-            </div>
-            {cur && <div className="rounded-full bg-primary-foreground px-1 py-0.5"><StatusChip status={cur.status} /></div>}
-          </div>
-        </div>
 
-        {/* Action buttons */}
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-          <ActionButton variant="primary" disabled={!!cur || !queue.length} onClick={() => run((st) => callNext(st, counter.id, pin), "Next token called")}>
-            <PhoneCall className="size-4" /> Call Next
-          </ActionButton>
-          <ActionButton variant="serve" disabled={cur?.status !== "CALLED"} onClick={() => run((st) => startServing(st, counter.id, pin), "Now serving")}>
-            <Play className="size-4" /> Start Serving
-          </ActionButton>
-          <ActionButton disabled={cur?.status !== "SERVING"} onClick={() => run((st) => complete(st, counter.id, pin), "Token completed")}>
-            <CheckCircle2 className="size-4" /> Complete
-          </ActionButton>
-          <ActionButton variant="danger" disabled={cur?.status !== "CALLED"} onClick={() => run((st) => markMissed(st, counter.id, pin), "Marked missed")}>
-            <UserX className="size-4" /> Mark Missed
-          </ActionButton>
-        </div>
+              <div className="grid gap-6 lg:grid-cols-2">
+                <div className="space-y-6">
+                  <section className="rounded-lg border border-border bg-card p-7">
+                    <div className="flex justify-between gap-4">
+                      <div>
+                        <h2 className="text-xl font-semibold">
+                          {counter.name}
+                        </h2>
 
-        {/* Missed tokens */}
-        <div className="surface p-6">
-          <h3 className="flex items-center gap-2 text-lg font-semibold"><BellRing className="size-4 text-missed" /> Missed tokens</h3>
-          <p className="text-xs text-muted-foreground">Auto-recalled after {s.policy.recallGap} more calls · second miss becomes a no-show.</p>
-          <div className="mt-4 flex flex-wrap gap-2">
-            {missed.map((e) => {
-              const ready = (s.callCount[e.serviceId] ?? 0) >= (e.recallAfterCall ?? Infinity);
-              return (
-                <Button key={e.id} disabled={!!cur} onClick={() => run((st) => recall(st, counter.id, pin, e.id), `${e.token} recalled`)}
-                  className="flex h-auto items-center gap-2 rounded-md border border-missed/30 bg-missed/5 px-3 py-2">
-                  <span className="font-token font-bold text-missed">{e.token}</span>
-                  <span className="text-xs text-muted-foreground">{ready ? "eligible" : "cooling"}</span>
-                  <RotateCcw className="size-3.5" />
-                </Button>
-              );
-            })}
-            {!missed.length && <p className="text-sm text-muted-foreground">None 🎉</p>}
-          </div>
-        </div>
-      </div>
+                        <p className="mt-2 text-muted-foreground">
+                          {service?.name}
+                        </p>
+                      </div>
 
-      {/* Up next + activity */}
-      <div className="surface p-6 lg:col-span-2">
-        <div className="flex items-center justify-between">
-          <h3 className="text-lg font-semibold">Up next for this counter</h3>
-          <span className="rounded-full bg-muted px-3 py-1 text-xs font-semibold">{queue.length}</span>
-        </div>
-        <p className="text-xs text-muted-foreground">Order: priority → eligible recalls → normal FIFO</p>
-        <ol className="mt-4 space-y-2">
-          {queue.map((e, i) => (
-            <li key={e.id} className={`animate-rise flex items-center justify-between rounded-md border px-4 py-3 ${i === 0 ? "border-accent/40 bg-accent-soft" : "border-border bg-background"}`} style={{ animationDelay: `${i * 30}ms` }}>
-              <span className="flex items-center gap-3">
-                <span className="font-token text-xl font-bold">{e.token}</span>
-                <span className="text-sm text-muted-foreground">{e.customer}</span>
-              </span>
-              <span className="flex items-center gap-2">
-                {e.priority && <PriorityChip />}
-                {e.status === "MISSED" ? <StatusChip status="MISSED" /> : <span className="font-token text-xs text-muted-foreground">~{estimateWaitMin(s, e)}m</span>}
-              </span>
-            </li>
-          ))}
-          {!queue.length && <li className="py-10 text-center text-muted-foreground">Queue is empty</li>}
-        </ol>
-        <h4 className="mt-6 text-xs font-bold uppercase tracking-widest text-muted-foreground">Activity</h4>
-        <ul className="mt-2 max-h-48 space-y-1 overflow-auto text-sm">
-          {s.log.slice(0, 12).map((l, i) => (
-            <li key={i} className="flex gap-3">
-              <span className="font-token text-xs text-muted-foreground">{new Date(l.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
-              {l.text}
-            </li>
-          ))}
-        </ul>
-      </div>
-    </div>
+                      <span className="text-sm text-primary">
+                        {counter.is_active ? "Open" : "Closed"}
+                      </span>
+                    </div>
+
+                    <p className="mt-7 text-xs font-bold uppercase tracking-widest text-primary">
+                      Current customer
+                    </p>
+
+                    <p className="mt-3 font-token text-6xl font-bold text-primary sm:text-7xl">
+                      {current?.token_number || "—"}
+                    </p>
+
+                    {current ? (
+                      <>
+                        <p className="my-4 text-xl font-semibold">
+                          {current.customer_name}
+                        </p>
+
+                        <StatusChip status={current.status} />
+                      </>
+                    ) : (
+                      <p className="mt-4 text-muted-foreground">
+                        No active customer. Call the next token.
+                      </p>
+                    )}
+                  </section>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <Button
+                      className="h-auto py-4"
+                      disabled={
+                        busy ||
+                        !!error ||
+                        !!current ||
+                        !waiting.length ||
+                        !counter.is_active
+                      }
+                      onClick={() =>
+                        perform(() =>
+                          ticketsApi.callNext(counter.id)
+                        )
+                      }
+                    >
+                      <PhoneCall className="size-4" />
+                      Call Next
+                    </Button>
+
+                    <Button
+                      className="h-auto py-4"
+                      disabled={
+                        busy || current?.status !== "CALLED"
+                      }
+                      onClick={() =>
+                        perform(() =>
+                          ticketsApi.startServing(current.id)
+                        )
+                      }
+                    >
+                      <Play className="size-4" />
+                      Start Serving
+                    </Button>
+
+                    <Button
+                      variant="outline"
+                      className="h-auto py-4"
+                      disabled={
+                        busy || current?.status !== "SERVING"
+                      }
+                      onClick={() =>
+                        perform(() =>
+                          ticketsApi.complete(current.id)
+                        )
+                      }
+                    >
+                      <CheckCircle2 className="size-4" />
+                      Complete
+                    </Button>
+
+                    <Button
+                      variant="outline"
+                      className="h-auto py-4 text-missed"
+                      disabled={
+                        busy ||
+                        !["CALLED", "SERVING"].includes(
+                          current?.status
+                        )
+                      }
+                      onClick={() =>
+                        perform(() =>
+                          ticketsApi.markMissed(current.id)
+                        )
+                      }
+                    >
+                      <UserX className="size-4" />
+                      Mark Missed
+                    </Button>
+                  </div>
+
+                  <section className="rounded-lg border border-border bg-card p-6">
+                    <h2 className="text-lg font-semibold text-missed">
+                      Missed customers
+                    </h2>
+
+                    {missed.map((ticket) => (
+                      <div
+                        key={ticket.id}
+                        className="mt-3 flex items-center justify-between gap-3 border-b border-border py-3"
+                      >
+                        <span className="font-token text-xl font-bold">
+                          {ticket.token_number}
+                        </span>
+
+                        <span className="text-sm">
+                          {ticket.customer_name}
+                        </span>
+                      </div>
+                    ))}
+
+                    {!missed.length && (
+                      <p className="mt-3 text-sm text-muted-foreground">
+                        No missed customers
+                      </p>
+                    )}
+                  </section>
+                </div>
+
+                <section className="rounded-lg border border-border bg-card p-6">
+                  <h2 className="text-xl font-semibold">
+                    Waiting customers
+                  </h2>
+
+                  <p className="mt-2 text-sm text-muted-foreground">
+                    {service?.name} · {waiting.length} waiting
+                  </p>
+
+                  <div className="my-5 rounded-md border border-primary/30 bg-primary/10 p-4">
+                    <p className="text-xs font-bold uppercase tracking-widest text-primary">
+                      Next to call
+                    </p>
+
+                    <p className="mt-2 font-token text-3xl font-bold">
+                      {waiting[0]?.token_number || "—"}
+                    </p>
+
+                    <p className="mt-2">
+                      {waiting[0]?.customer_name ||
+                        "Queue is empty"}
+                    </p>
+                  </div>
+
+                  <ol className="space-y-3">
+                    {waiting.map((ticket, index) => (
+                      <li
+                        key={ticket.id}
+                        className="flex items-center justify-between gap-3 rounded-md bg-background p-4"
+                      >
+                        <div>
+                          <p className="font-token text-xl font-bold">
+                            {ticket.token_number}
+                          </p>
+
+                          <p className="mt-1 text-sm text-muted-foreground">
+                            {ticket.customer_name}
+                          </p>
+                        </div>
+
+                        <span className="text-sm text-muted-foreground">
+                          #{index + 1}
+                        </span>
+                      </li>
+                    ))}
+                  </ol>
+
+                  {!waiting.length && (
+                    <p className="py-8 text-center text-muted-foreground">
+                      No waiting customers
+                    </p>
+                  )}
+                </section>
+              </div>
+
+              <p className="mt-6 text-center text-xs text-muted-foreground">
+                Queue refreshes every 5 seconds.
+              </p>
+            </>
+          )}
+        </>
+      )}
+    </AppShell>
   );
 }
