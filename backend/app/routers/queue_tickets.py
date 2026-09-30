@@ -146,6 +146,41 @@ def call_next(
     return ticket
 
 
+@router.get("/board")
+def get_board(
+    branch_id: int,
+    db: Session = Depends(get_db),
+):
+    tickets = db.scalars(
+        select(QueueTicket)
+        .where(
+            QueueTicket.branch_id == branch_id,
+            QueueTicket.queue_date == date.today(),
+            QueueTicket.status.in_(
+                ("WAITING", "CALLED", "SERVING", "MISSED")
+            ),
+        )
+        .order_by(
+            QueueTicket.sequence_number,
+            QueueTicket.id,
+        )
+    ).all()
+
+    return [
+        {
+            "id": ticket.id,
+            "token_number": ticket.token_number,
+            "service_id": ticket.service_id,
+            "counter_id": ticket.counter_id,
+            "status": ticket.status,
+            "called_at": ticket.called_at,
+        }
+        for ticket in tickets
+    ]
+
+
+
+
 @router.get("/{ticket_id}", response_model=QueueTicketRead)
 def get_ticket(
     ticket_id: int,
