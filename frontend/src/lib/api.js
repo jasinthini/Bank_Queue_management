@@ -18,7 +18,9 @@ export async function apiRequest(
   path,
   { method = "GET", body, token = getToken(), signal } = {}
 ) {
-  const headers = {};
+  const headers = {
+    Accept: "application/json",
+  };
 
   if (body !== undefined) {
     headers["Content-Type"] = "application/json";
@@ -35,7 +37,10 @@ export async function apiRequest(
       method,
       headers,
       signal,
-      body: body === undefined ? undefined : JSON.stringify(body),
+      body:
+        body === undefined
+          ? undefined
+          : JSON.stringify(body),
     });
   } catch (error) {
     if (error.name === "AbortError") {
@@ -43,7 +48,7 @@ export async function apiRequest(
     }
 
     throw new Error(
-      "Backend இணைக்க முடியவில்லை. Server மற்றும் CORS சரிபாருங்கள்."
+      "Backend இணைக்க முடியவில்லை. Backend server மற்றும் CORS சரிபாருங்கள்."
     );
   }
 
@@ -55,8 +60,9 @@ export async function apiRequest(
       data = JSON.parse(text);
     } catch {
       const error = new Error(
-        `Backend response error (${response.status})`
+        `Backend JSON response சரியாக இல்லை (${response.status}).`
       );
+
       error.status = response.status;
       throw error;
     }
@@ -74,13 +80,17 @@ export async function apiRequest(
             ? item.loc.join(".")
             : "";
 
-          return field ? `${field}: ${item.msg}` : item.msg;
+          return field
+            ? `${field}: ${item.msg}`
+            : item.msg;
         })
         .join("\n");
     }
 
     const error = new Error(message);
     error.status = response.status;
+    error.detail = data?.detail;
+
     throw error;
   }
 
@@ -91,16 +101,22 @@ function query(filters = {}) {
   const params = new URLSearchParams();
 
   Object.entries(filters).forEach(([key, value]) => {
-    if (value !== undefined && value !== null && value !== "") {
+    if (
+      value !== undefined &&
+      value !== null &&
+      value !== ""
+    ) {
       params.set(key, String(value));
     }
   });
 
   const result = params.toString();
+
   return result ? `?${result}` : "";
 }
 
 // Authentication
+
 export function loginUser(email, password) {
   return apiRequest("/auth/login", {
     method: "POST",
@@ -136,6 +152,8 @@ export async function signIn(email, password) {
   return user;
 }
 
+// Public registration sends no role.
+// The backend must assign CUSTOMER.
 export function registerUser(data) {
   return apiRequest("/auth/register", {
     method: "POST",
@@ -149,6 +167,7 @@ export function registerUser(data) {
 }
 
 // Branches
+
 export const branchesApi = {
   list: () => apiRequest("/branches/"),
 
@@ -173,9 +192,12 @@ export const branchesApi = {
 };
 
 // Services
+
 export const servicesApi = {
   list: (branchId) =>
-    apiRequest(`/services/${query({ branch_id: branchId })}`),
+    apiRequest(
+      `/services/${query({ branch_id: branchId })}`
+    ),
 
   get: (id) => apiRequest(`/services/${id}`),
 
@@ -198,6 +220,7 @@ export const servicesApi = {
 };
 
 // Counters
+
 export const countersApi = {
   list: (filters = {}) =>
     apiRequest(`/counters/${query(filters)}`),
@@ -223,6 +246,7 @@ export const countersApi = {
 };
 
 // Customer tickets and Staff operations
+
 export const ticketsApi = {
   create: (branchId, serviceId) =>
     apiRequest("/queue-tickets/", {
@@ -235,24 +259,30 @@ export const ticketsApi = {
 
   my: () => apiRequest("/queue-tickets/my"),
 
+  // Fetch the latest customer ticket status.
   get: (id) => apiRequest(`/queue-tickets/${id}`),
 
-  // Protected Staff list, including customer names.
+  // Requires the backend's protected Staff endpoint.
   staff: (branchId) =>
     apiRequest(
-      `/queue-tickets/staff${query({ branch_id: branchId })}`
+      `/queue-tickets/staff${query({
+        branch_id: branchId,
+      })}`
     ),
 
-  // Customer can cancel their own WAITING ticket.
+  // Requires the backend's owner-only cancellation endpoint.
   cancel: (id) =>
     apiRequest(`/queue-tickets/${id}/cancel`, {
       method: "PUT",
     }),
 
   callNext: (counterId) =>
-    apiRequest(`/queue-tickets/call-next/${counterId}`, {
-      method: "POST",
-    }),
+    apiRequest(
+      `/queue-tickets/call-next/${counterId}`,
+      {
+        method: "POST",
+      }
+    ),
 
   updateStatus: (id, status) =>
     apiRequest(`/queue-tickets/${id}/status`, {
@@ -271,6 +301,8 @@ export const ticketsApi = {
 };
 
 // Admin user and Staff management
+// The backend must enforce Admin authorization.
+
 export const usersApi = {
   list: () => apiRequest("/users/"),
 
@@ -289,14 +321,19 @@ export const usersApi = {
   updateRole: (id, role) =>
     apiRequest(`/users/${id}/role`, {
       method: "PUT",
-      body: { role },
+      body: {
+        role: String(role).toUpperCase(),
+      },
     }),
 };
 
 // Public Live Board
+
 export function getBoardTickets(branchId) {
   return apiRequest(
-    `/queue-tickets/board${query({ branch_id: branchId })}`,
+    `/queue-tickets/board${query({
+      branch_id: branchId,
+    })}`,
     { token: null }
   );
 }
