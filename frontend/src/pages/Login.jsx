@@ -1,9 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-
-const API_URL = (
-  import.meta.env.VITE_API_URL || "http://127.0.0.1:8000"
-).replace(/\/+$/, "");
+import { signIn, logout } from "../lib/api.js";
 
 export default function Login() {
   const navigate = useNavigate();
@@ -22,48 +19,7 @@ export default function Login() {
     setLoading(true);
 
     try {
-      const response = await fetch(`${API_URL}/auth/login`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          email: email.trim().toLowerCase(),
-          password,
-        }),
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(
-          typeof data.detail === "string"
-            ? data.detail
-            : "Email மற்றும் password சரிபாருங்கள்."
-        );
-      }
-
-      if (!data.access_token) {
-        throw new Error("Login token கிடைக்கவில்லை.");
-      }
-
-      const userResponse = await fetch(`${API_URL}/auth/me`, {
-        headers: {
-          Authorization: `Bearer ${data.access_token}`,
-        },
-      });
-
-      const user = await userResponse.json();
-
-      if (!userResponse.ok) {
-        throw new Error(
-          typeof user.detail === "string"
-            ? user.detail
-            : "User தகவலைப் பெற முடியவில்லை."
-        );
-      }
-
-      const role = String(user.role || "").toUpperCase();
+      const user = await signIn(email, password);
 
       const destinations = {
         ADMIN: "/admin",
@@ -71,27 +27,18 @@ export default function Login() {
         CUSTOMER: "/",
       };
 
-      if (!destinations[role]) {
+      const role = String(user.role || "").toUpperCase();
+      const destination = destinations[role];
+
+      if (!destination) {
+        logout();
         throw new Error("User role சரியாக இல்லை.");
       }
 
-      localStorage.setItem(
-        "queueflow_access_token",
-        data.access_token
-      );
-      localStorage.setItem(
-        "queueflow_user",
-        JSON.stringify(user)
-      );
-
       setPassword("");
-      navigate(destinations[role], { replace: true });
+      navigate(destination, { replace: true });
     } catch (err) {
-      setError(
-        err instanceof TypeError
-          ? "Backend இணைப்பு இல்லை. Server மற்றும் CORS சரிபாருங்கள்."
-          : err.message || "Login failed."
-      );
+      setError(err.message || "Login failed.");
     } finally {
       setLoading(false);
     }
@@ -204,6 +151,7 @@ export default function Login() {
               Don't have an account?{" "}
               <button
                 type="button"
+                onClick={() => navigate("/register")}
                 className="font-semibold text-primary hover:underline"
               >
                 Create Account
