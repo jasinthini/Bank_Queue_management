@@ -1,7 +1,7 @@
 from datetime import date, datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
@@ -150,9 +150,13 @@ def staff_tickets(
         .options(joinedload(QueueTicket.customer))
         .where(
             QueueTicket.branch_id == branch_id,
-            QueueTicket.queue_date == date.today(),
+            or_(
+                QueueTicket.queue_date == date.today(),
+                QueueTicket.status.in_(("CALLED", "SERVING")),
+            ),
         )
         .order_by(
+            QueueTicket.queue_date,
             QueueTicket.sequence_number,
             QueueTicket.id,
         )
